@@ -1,43 +1,38 @@
 import torch as th
 from torch import nn 
 from torch.nn import functional as f
-
-class Normal(nn.Module):
-    def __init__(self,ins,ous,kernal,stride,pad):
-        super().__init__()
-
-        self.conv=nn.Sequential(
-            nn.Conv2d(ins,ous,kernal,stride,pad,bias=False),
-            nn.BatchNorm2d(ous))
-        
-    def forward(self,x):
-        return self.conv(x)
-
+from torchsummary import summary
 class Block(nn.Module):
     def __init__(self,ins,ous,stride=1,shortcut=None):
         super().__init__()
         mid=ous//4
         
         self.left=nn.Sequential(
-            Normal(ins,mid,1,stride,0), 
-            Normal(mid,ous,3,1,1) ,
-            Normal(ous,ous,1,1,0),
-            nn.ReLU(inplace=True))
+            nn.Conv2d(ins,mid,1,1,0,bias=False),
+            nn.BatchNorm2d(mid),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid,mid,3,stride,1,bias=False),
+            nn.BatchNorm2d(mid),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid,ous,1,1,0,bias=False),
+            nn.BatchNorm2d(ous))
         
         self.right=shortcut
+        self.relu=nn.ReLU(inplace=True)
     
     def forward(self,x):
         out=self.left(x)
         resdiual=x if self.right is None else self.right(x)
         out+=resdiual
-        return f.relu(out,inplace=True)
+        return self.relu(out)
     
 class Net(nn.Module):
     def __init__(self,num_calss):
         super().__init__()
 
         self.layer=nn.Sequential(
-            Normal(3,64,7,2,3),  # b,64,112,112
+            nn.Conv2d(3,64,7,2,3,bias=False),  # b,64,112,112
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(3,2,1)) # b,64,56,56
         
@@ -45,7 +40,8 @@ class Net(nn.Module):
         self.layer2=self.make_layer(256,512,2,4) # b,512,28,28
         self.layer3=self.make_layer(512,1024,2,6) # b 1024,14,14
         self.layer4=self.make_layer(1024,2048,2,3) # b 2048,7,7
- 
+        
+        self.avg=nn.AdaptiveAvgPool2d(1)
         self.fc=nn.Linear(2048,num_calss) # b,num_class
 
         for m in self.modules():
@@ -58,7 +54,8 @@ class Net(nn.Module):
     def make_layer(self,ins,ous,stride,num):
 
         shortcut=nn.Sequential(
-            Normal(ins,ous,1,stride,0))
+            nn.Conv2d(ins,ous,1,stride,0,bias=False),
+            nn.BatchNorm2d(ous))
     
         layer=[]
         layer.append(Block(ins,ous,stride,shortcut))
@@ -73,7 +70,7 @@ class Net(nn.Module):
         x=self.layer2(x)
         x=self.layer3(x)
         x=self.layer4(x)
-        x=f.avg_pool2d(x,7) # b,2048,1,1
+        x=self.avg(x) # b,2048,1,1
         x=x.view(x.size(0),-1) # b,2048
         return self.fc(x)   # b,num_class
     
@@ -102,16 +99,16 @@ class Net(nn.Module):
 if __name__ == '__main__':
     
     data=th.rand(1,3,224,224)
-    net=Net(10)
+    net=Net(1000)
 
-    layers=net.get_all_layer()
-    handles=[]
-    for ly in layers:
-        hd=ly.register_forward_hook(net.hook)
-        handles.append(hd)
+    # layers=net.get_all_layer()
+    # handles=[]
+    # for ly in layers:
+    #     hd=ly.register_forward_hook(net.hook)
+    #     handles.append(hd)
     
-    with th.no_grad():
-        net(data)
+    # with th.no_grad():
+    #     net(data)
     
-    net.rm_hook(handles)
-        
+    # net.rm_hook(handles)
+    summary(net,(3,224,224),batch_size=1,device='cpu')
